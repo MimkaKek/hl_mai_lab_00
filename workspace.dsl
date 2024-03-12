@@ -1,37 +1,43 @@
 workspace {
-    name "Умный дом"
-    description "Простая система управления умного дома с базовыми функциями контроля состояния атмосферы в помещении"
+    name "Домашнее задание 1"
 
-    # включаем режим с иерархической системой идентификаторов
     !identifiers hierarchical
 
     !docs documentation
     !adrs decisions
-    # Модель архитектуры
+
     model {
 
-        # Настраиваем возможность создания вложенных груп
         properties { 
             structurizr.groupSeparator "/"
         }
-        
 
-        # Описание компонент модели
-        user = person "Пользователь умного дома"
-        sensor     = softwareSystem "Датчик температуры"
-        smart_home = softwareSystem "Умный дом" {
-            description "Сервер управления умным домом"
+        user = person "Пользователь"
+        yandex_system = softwareSystem "API Яндекс карт" {
+            description "Или что-то иное..."
+        }
 
-            user_service = container "User service" {
-                description "Сервис управления пользователями"
+        main_system = softwareSystem "Приложение 'Попутчик'" {
+            description "Позволяет заносить информацию о поездках и марщрутах для последующего поиска других пользователей со схожими параметрами"
+            
+            gateway = container "Общий интерфейс" {
+                description "Предоставляет единый доступ к другим сервисам, отправляя нужные запросы им"
+            }
+            
+            user_service = container "Сервис пользователей" {
+                description "Управляет пользователями"
             }
 
-            temperature_service = container "Temperature service" {
-                description "Сервис мониторинга и управления температурой в доме"
+            path_service = container "Сервис маршрутов" {
+                description "Управляет маршрутами"
+            }
+
+            trip_service = container "Сервис поездок" {
+                description "Управляет поездками"
             }
 
             group "Слой данных" {
-                user_database = container "User Database" {
+                user_db = container "User DB" {
                     description "База данных с пользователями"
                     technology "PostgreSQL 15"
                     tags "database"
@@ -43,56 +49,62 @@ workspace {
                     tags "database"
                 }
 
-                smarthome_database = container "Smarthome Database" {
-                    description "База данных для хранения информации с сенсоров"
+                poput_db = container "'Poputchik' DB" {
+                    description "База данных для хранения информации о поездках и маршрутах"
                     technology "MongoDB 5"
                     tags "database"
                 }
             }
 
+            user -> gateway "Запрос" "REST HTTP:443"
+
+            gateway -> user_service "Взаимодействие с пользователями" "TCP 7645"
+            gateway -> path_service "Взаимодействие с маршрутами" "TCP 8694"
+            gateway -> trip_service "Взаимодействие с поездками" "TCP 4879"
+
+            trip_service -> path_service "Запрос маршрута"
+            path_service -> yandex_system "Запрос на получение маршрута из точки А в точку Б" "REST HTTP:443"
+
             user_service -> user_cache "Получение/обновление данных о пользователях" "TCP 6379"
-            user_service -> user_database "Получение/обновление данных о пользователях" "TCP 5432"
+            user_service -> user_db "Получение/обновление данных о пользователях" "TCP 5432"
 
-            temperature_service -> smarthome_database "Получение/обновление данных о температуре" "TCP 27018"
-            temperature_service -> user_service "Аутентификация пользователя" "REST HTTP 443"
-
-            user -> user_service "Регистрация нового пользователя" "REST HTTP:8080"
-            sensor -> temperature_service "Получение данных о температуре в доме" "REST HTTP:8080"
+            path_service -> poput_db "Получение/обновление данных о маршрутах" "TCP 27018"
+            trip_service -> poput_db "Получение/обновление данных о поездках" "TCP 27018"
         }
 
-        user -> smart_home "Управление устройствами умного дома"
-        sensor -> smart_home "Обновление актуальных данных о температуре в доме" "REST HTTP:8080"
-
         deploymentEnvironment "Production" {
-            deploymentNode "User Server" {
-                containerInstance smart_home.user_service
+
+            deploymentNode "Gateway Server" {
+                containerInstance main_system.gateway
             }
 
-            deploymentNode "Temperature Server" {
-                containerInstance smart_home.temperature_service
-                properties {
-                    "cpu" "4"
-                    "ram" "256Gb"
-                    "hdd" "4Tb"
-                }
+            deploymentNode "User Server" {
+                containerInstance main_system.user_service
+            }
+
+            deploymentNode "Path Server" {
+                containerInstance main_system.path_service
+            }
+
+            deploymentNode "Trip Server" {
+                containerInstance main_system.trip_service
             }
 
             deploymentNode "databases" {
      
                 deploymentNode "Database Server 1" {
-                    containerInstance smart_home.user_database
+                    containerInstance main_system.user_db
                 }
 
                 deploymentNode "Database Server 2" {
-                    containerInstance smart_home.smarthome_database
+                    containerInstance main_system.poput_db
                     instances 3
                 }
 
                 deploymentNode "Cache Server" {
-                    containerInstance smart_home.user_cache
+                    containerInstance main_system.user_cache
                 }
             }
-            
         }
     }
 
@@ -103,37 +115,82 @@ workspace {
             structurizr.tooltips true
         }
 
-
         !script groovy {
             workspace.views.createDefaultViews()
             workspace.views.views.findAll { it instanceof com.structurizr.view.ModelView }.each { it.enableAutomaticLayout() }
         }
 
-        dynamic smart_home "UC01" "Добавление нового пользователя" {
+        systemContext main_system "Context" {
+            include *
             autoLayout
-            user -> smart_home.user_service "Создать нового пользователя (POST /user)"
-            smart_home.user_service -> smart_home.user_database "Сохранить данные о пользователе" 
         }
 
-        dynamic smart_home "UC02" "Удаление пользователя" {
+        container main_system "Container" {
+            include *
             autoLayout
-            user -> smart_home.user_service "Удалить нового пользователя (DELETE /user)"
-            smart_home.user_service -> smart_home.user_database "Удалить данные о пользователе" 
         }
 
-        dynamic smart_home "UC03" "Сохранить данные о температуре" {
+        deployment main_system "Production" "Deploy" {
+            include *
             autoLayout
-            sensor -> smart_home.temperature_service "Сохранить данные о температуре (POST /user)"
-            smart_home.temperature_service -> smart_home.smarthome_database "Сохранить данные о температуре" 
         }
 
-        dynamic smart_home "UC04" "Получить данные о температуре" {
+        dynamic main_system "UC01" "Добавление нового пользователя" {
             autoLayout
-            sensor -> smart_home.temperature_service "Получить данные о температуре (GET /user)"
-            smart_home.temperature_service -> smart_home.user_service "Проверить аутентификацию пользователя (GET /user)"
-            smart_home.temperature_service -> smart_home.smarthome_database "Получить данные о температуре" 
+            user -> main_system.gateway "Создать нового пользователя (POST /user)"
+            main_system.gateway -> main_system.user_service "Создать нового пользователя"
+            main_system.user_service -> main_system.user_db "Сохранить данные о пользователе" 
         }
 
+        dynamic main_system "UC02" "Поиск пользователя по логину" {
+            autoLayout
+            user -> main_system.gateway "Поиск пользователя (GET /search/user?login=<str>)"
+            main_system.gateway -> main_system.user_service "Поиск пользователя"
+            main_system.user_service -> main_system.user_db "Получить данные о пользователе"
+        }
+
+        dynamic main_system "UC03" "Поиск пользователя по имени (фамилии)" {
+            autoLayout
+            user -> main_system.gateway "Поиск пользователя (GET /search/user?fname=<str>&sname=<str>)"
+            main_system.gateway -> main_system.user_service "Поиск пользователя"
+            main_system.user_service -> main_system.user_db "Получить данные о пользователе"
+        }
+
+        dynamic main_system "UC04" "Создание маршрута" {
+            autoLayout
+            user -> main_system.gateway "Создание маршрута (POST /path)"
+            main_system.gateway -> main_system.path_service "Поиск пользователя"
+            main_system.path_service -> yandex_system "Получить новый маршрут"
+            main_system.path_service -> main_system.poput_db "Сохранить новый маршрут"
+        }
+
+        dynamic main_system "UC05" "Получение маршрутов пользователя" {
+            autoLayout
+            user -> main_system.gateway "Получение маршрутов пользователя (GET /paths)"
+            main_system.gateway -> main_system.path_service "Запрос маршрутов"
+            main_system.path_service -> main_system.poput_db "Получить маршруты"
+        }
+
+        dynamic main_system "UC06" "Создание поездки" {
+            autoLayout
+            user -> main_system.gateway "Создание поездки (POST /trip)"
+            main_system.gateway -> main_system.trip_service "Создание поездки"
+            main_system.trip_service -> main_system.poput_db "Создать новую поездку"
+        }
+
+        dynamic main_system "UC07" "Подключение пользователей к поездке" {
+            autoLayout
+            user -> main_system.gateway "Подключение к поездке (PUT /trip)"
+            main_system.gateway -> main_system.trip_service "Подключение к поездке"
+            main_system.trip_service -> main_system.poput_db "Присоединение пользователя к поездке"
+        }
+        
+        dynamic main_system "UC08" "Получение информации о поездке" {
+            autoLayout
+            user -> main_system.gateway "Получение информации о поездке (GET /trip?id=<uuid>)"
+            main_system.gateway -> main_system.trip_service "Запрос данных о поездке"
+            main_system.trip_service -> main_system.poput_db "Получение данных о поездке"
+        }
 
         styles {
             element "database" {
